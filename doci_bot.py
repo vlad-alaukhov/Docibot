@@ -18,6 +18,7 @@ load_dotenv(".venv/.env")
 TOKEN = os.getenv('TG_TOKEN')
 FAISS_BASE_DIR = "DB_FAISS"
 
+
 # Состояния диалога
 SELECTING_DB, PROCESSING_QUERY = range(2)
 
