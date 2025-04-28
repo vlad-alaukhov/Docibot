@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Dict
+from typing import Dict, Any
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -11,7 +11,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler
 )
-from rag_processor import DBConstructor
+from rag_processor import *
 
 # Загрузка переменных окружения
 load_dotenv(".venv/.env")
@@ -25,6 +25,21 @@ SELECTING_DB, PROCESSING_QUERY = range(2)
 # Хранилище сессий пользователей
 user_sessions: Dict[int, dict] = {}
 
+# Глобальное хранилище (db_name -> db_result)
+preloaded_dbs: Dict[str, Dict[str, Any]] = {}
+
+
+def preload_databases():
+    """Загружает все базы при старте бота"""
+    global preloaded_dbs
+    processor = DBConstructor()
+
+    for db_name in os.listdir(FAISS_BASE_DIR):
+        db_path = os.path.join(FAISS_BASE_DIR, db_name)
+        if os.path.isdir(db_path):
+            db_result = processor.faiss_loader(db_path, hybrid_mode=True)
+            if db_result["success"]:
+                preloaded_dbs[db_name] = db_result
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Инициализация выбора базы знаний"""
@@ -68,67 +83,69 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_database_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора базы данных"""
     user_id = update.effective_user.id
     selected_db = update.message.text
 
-    try:
-        # Инициализация обработчика базы
-        processor = DBConstructor()
-        db_path = os.path.join(FAISS_BASE_DIR, selected_db)
-
-        # Сохраняем в сессию
-        user_sessions[user_id] = {
-            "processor": processor,
-            "db_path": db_path,
-            "status": PROCESSING_QUERY
-        }
-
-        await update.message.reply_text(
-            f"✅ База '{selected_db}' успешно загружена!\n"
-            "Задавайте ваш вопрос:",
-            reply_markup=ReplyKeyboardRemove()  # Убираем клавиатуру
-        )
-        return PROCESSING_QUERY
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+    if selected_db not in preloaded_dbs:
+        await update.message.reply_text("❌ База не найдена в кэше")
         return ConversationHandler.END
+
+    user_sessions[user_id] = {
+        "db_name": selected_db,  # Только имя базы, не путь
+        "status": PROCESSING_QUERY
+    }
+
+    await update.message.reply_text(
+        f"✅ База '{selected_db}' готова к поиску!\nЗадавайте вопрос:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return PROCESSING_QUERY
 
 
 async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка поискового запроса"""
     user_id = update.effective_user.id
-
     if user_id not in user_sessions:
         await update.message.reply_text("⚠️ Сначала выберите базу через /start")
         return
 
-    # Получаем данные из сессии
-    processor = user_sessions[user_id]["processor"]
-    db_path = user_sessions[user_id]["db_path"]
     query = update.message.text
+    db_name = user_sessions[user_id]["db_name"]
 
     try:
-        msg = await update.message.reply_text("⏳ Обрабатываю запрос...")
+        msg = await update.message.reply_text("🔍 Ищу информацию...")
 
-        # Выполняем поиск
-        results = processor.sim_search(query, db_path, k=5)
+        # Получаем предзагруженную базу
+        db_result = preloaded_dbs.get(db_name)
+        if not db_result:
+            await msg.edit_text("❌ База не загружена")
+            return
 
-        # Форматируем ответ
-        response = []
-        current_doc = None
-        for doc in results:
-            if doc.metadata.get("document_title") != current_doc:
-                current_doc = doc.metadata.get("document_title")
-                response.append(f"\n📄 **{current_doc}**\n")
-            response.append(f"• {doc.page_content[:250]}...\n")
+        # Используем новый метод поиска
+        processor = DBConstructor()
+        results = processor.mmr_search(
+            query=query,
+            db_result=db_result,
+            k=5,
+            lambda_mult=0.3
+        )
 
-        # Отправляем результат
-        await msg.edit_text('\n'.join(response)[:4000])  # Ограничение Telegram
+        # Форматирование результатов (ваш текущий код)
+        response = format_results(results)
+        await msg.edit_text(response[:4000])
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ошибка: {str(e)}")
+
+def format_results(docs: List[LangDoc]) -> str:
+    """Ваш текущий код форматирования из handle_query"""
+    response = []
+    current_doc = None
+    for doc in docs:
+        if doc.metadata.get("document_title") != current_doc:
+            current_doc = doc.metadata.get("document_title")
+            response.append(f"\n📄 **{current_doc}**\n")
+        response.append(f"• {doc.page_content[:250]}...\n")
+    return '\n'.join(response)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,6 +161,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Инициализация и запуск бота"""
+    # Предзагрузка всех баз при старте
+    preload_databases()
+    print(f"✅ Предзагружено баз: {len(preloaded_dbs)}")
+
     app = Application.builder().token(TOKEN).build()
 
     # Настройка обработчиков диалога
