@@ -266,7 +266,7 @@ async def handle_query(message: types.Message):
             return
 
         # Отправляем индикатор поиска
-        search_msg = await message.answer("🔍 Ищем ответ в документах...")
+        search_msg = await message.answer("⏳ Ищу ответ в документах...")
 
         # Получаем контекст пользователя
         session = user_sessions[user_id]
