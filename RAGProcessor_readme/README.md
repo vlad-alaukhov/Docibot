@@ -3,60 +3,6 @@
 Модуль для работы с RAG-системами с поддержкой CPU и GPU.
 **Версии зависимостей строго зафиксированы для гарантии стабильности.**
 
-
-## Как удалить пакет локально с зависимостями
-
-1. **Полное удаление пакета и артефактов сборки**
-   `pip uninstall rag-processor -y`
-   `rm -rf ~/RAGProcessor/build ~/RAGProcessor/dist ~/RAGProcessor/*.egg-info`
-
-2. **Удаление зависимостей**
-   `pip uninstall -y torch sentence-transformers faiss-gpu langchain-core langchain-community langchain-openai pymupdf pdfminer.six camelot-py python-docx pandas opencv-python-headless tiktoken python-dotenv requests openpyxl numpy`
-
-3. **Очистка кэша pip**
-   `pip cache purge`
-
-4. **Для виртуальных окружений**
-   Удалите папку окружения и создайте новое:
-   `rm -rf .venv && python3 -m venv .venv && source .venv/bin/activate`
-
-**Примечания:**
-
-- Для GPU-зависимостей добавьте: `nvidia-cublas-cu12 nvidia-cuda-runtime-cu12` в команду удаления.
-- Если зависимости используются другими пакетами — используйте `pip-autoremove rag-processor -y`.
-- Фиксированные версии в `setup.py` могут требовать ручного управления зависимостями.
-
-## Как скомпилировать пакет с опцией -e для разработчика
-
-**Решение:**
-
-1. **Удаление предыдущей версии и артефактов**
-   `pip uninstall rag-processor -y`
-   `rm -rf ~/RAGProcessor/build ~/RAGProcessor/dist ~/RAGProcessor/*.egg-info`
-
-2. **Очистка зависимостей (опционально)**
-   `pip uninstall -y torch sentence-transformers faiss-gpu faiss-cpu langchain-core langchain-community langchain-openai pymupdf pdfminer.six camelot-py python-docx pandas opencv-python-headless tiktoken python-dotenv requests openpyxl numpy`
-
-3. **Установка в режиме разработки**
-   Для CPU:
-   `pip install -e . --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple`
-
-   Для GPU:
-   `pip install -e ~/RAGProcessor[gpu] --extra-index-url https://download.pytorch.org/whl/cu118 --extra-index-url https://pypi.org/simple --extra-index-url https://pypi.nvidia.com`
-
-**Примечания:**
-- Режим `-e` создает симлинки, позволяя редактировать код без переустановки.
-- Для GPU убедитесь, что CUDA 11.8 установлена и выбрана среда выполнения T4 в Colab.
-- При конфликтах: `rm -rf .venv && python -m venv .venv`.
-- Фиксированные версии в `setup.py` гарантируют совместимость.
-
-## Как установить пакет с диска в Ваш новый проект
-
-**Для CPU**
-
-`pip install -e ~/Projects/RAGProcessor --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple`
-
-
 ## Как установить пакет для CPU локально из requirements.txt
 
 **Решение:**
