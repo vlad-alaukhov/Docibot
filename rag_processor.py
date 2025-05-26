@@ -51,70 +51,6 @@ class RAGProcessor(RAG):
     def __init__(self):
         super().__init__()
 
-    def request_to_gigachat(self,
-                            prompts: List[Dict[str, Any]],
-                            verbose=False,
-                            **kwargs
-                            ):
-
-        attempts = 0
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
-        }
-
-        model = kwargs.get("model", "giga-pro")
-
-
-        payload = {
-            "model": model,
-            "messages": prompts,
-            "temperature": kwargs.get("temperature", 0),
-            **({"max_tokens": kwargs["max_tokens"]} if "max_tokens" in kwargs else {})
-        }
-
-        if verbose:
-            print("===============================================")
-            print("model: ", model)
-            print("-----------------------------------------------")
-            print("system: ")
-            pprint(prompts)
-            print("-----------------------------------------------")
-
-        response = None
-        while attempts < 3:
-            try:
-                response = requests.post(self.api_url, headers=headers, json=payload, verify=self.ssl)
-                response.raise_for_status()  # Проверка статуса HTTP
-                result_text = response.json()["choices"][0]["message"]["content"]
-                if verbose: print("Ответ модели: ", result_text)
-                return True, result_text
-
-            except requests.exceptions.HTTPError as http_err:
-                if response.status_code == 401:
-                    print("Ошибка авторизации: Получаем API-token.")
-                    url = "https://gigachat.devices.sberbank.ru/api/v2/oauth"
-                    payload = {
-                        "client_id": "24c1238f-6318-4cca-b528-5417bc24e59a",
-                        "client_secret": "0e30cc28-3fbb-4dbc-8361-509432fd59ad"
-                    }
-                    try:
-                        response = requests.post(url, json=payload, verify=self.ssl)
-                        response.raise_for_status()
-                        self.access_token = response.json()["access_token"]
-                    except requests.exceptions.HTTPError as http_err1:
-                        print(f"Ошибка ключа: {http_err1}")
-                    attempts += 1
-                else:
-                    print(f"Ошибка HTTP: {http_err}")
-
-            except Exception as e:
-                attempts += 1
-                result = e
-        return False, f"Ошибка генерации"
-
-
-
     def request_to_openai(self, system: str, request: str, temper: float, model="openai/gpt-4o-mini", verbose=False):
         attempts = 1
 
@@ -159,6 +95,72 @@ class RAGProcessor(RAG):
                 attempts += 1
                 if attempts >= 3: return False, f"Ошибка генерации: {e}"
         return False, f"Ошибка генерации"
+
+    def request_to_local(self, system: str, request: str, temper: float, model: str, verbose=False):
+        attempts = 1
+
+        headers = {
+            "Content-Type": "application/json"
+            # Авторизация не требуется для локального сервера
+        }
+
+        payload = {
+            "model": "default",  # Фиксированное значение для llama.cpp
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": request}
+            ],
+            "temperature": temper,
+            "max_tokens": 1024,  # Уменьшаем количество токенов
+            "stream": False
+        }
+
+        if verbose:
+            print("===============================================")
+            print("Локальная модель: ", model)
+            print("-----------------------------------------------")
+            print("system: ", system)
+            print("-----------------------------------------------")
+            print("user: ", request)
+            print("-----------------------------------------------")
+
+        while attempts < 4:  # Увеличим число попыток для стабильности
+            try:
+                # Убираем задержку для локального запроса
+                response = requests.post(
+                    f"{self.api_url}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=180  # Увеличиваем таймаут для CPU
+                )
+
+                if response.status_code != 200:
+                    raise requests.exceptions.HTTPError(
+                        f"HTTP Error {response.status_code}: {response.text}"
+                    )
+
+                response_data = response.json()
+
+                if 'choices' not in response_data:
+                    raise ValueError("Некорректный формат ответа от модели")
+
+                result_text = response_data['choices'][0]['message']['content']
+
+                if verbose:
+                    print("Ответ модели: ", result_text)
+                    print("-----------------------------------------------")
+                    print("Использовано токенов:", response_data['usage']['total_tokens'])
+
+                return True, result_text
+
+            except Exception as e:
+                print(f"Попытка {attempts} ошибка: {str(e)}")
+                attempts += 1
+                if attempts >= 4:
+                    return False, f"Ошибка генерации: {str(e)}"
+                time.sleep(2)  # Короткая пауза между попытками
+
+        return False, "Неизвестная ошибка генерации"
 
 class EmbeddingsNotInitialized(Exception):
     """Исключение, сигнализирующее о том, что модель эмбеддингов не была инициализирована."""
