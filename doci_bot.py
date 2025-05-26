@@ -318,7 +318,7 @@ async def handle_query(message: types.Message):
             temperature=prompts["temperature"]
         )
 
-        # Удаляем индикатор поиска
+        # Удаляем индикатор поиска.
         await search_msg.delete()
 
         # Создаем кнопки для источников
