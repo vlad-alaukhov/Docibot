@@ -177,6 +177,10 @@ class MetaCompatibilityError(Exception):
 class DBConstructor(RAGProcessor):
     def __init__(self, embeddings=None):
         super().__init__()
+        self.embedding_model_type = None
+        self.embedding_model_name = None
+        self.distance_strategy = None
+        self.is_e5_model = None
         self.embeddings = embeddings
         self.db_metadata = None
         self.chunk_size = 700
@@ -716,52 +720,104 @@ class DBConstructor(RAGProcessor):
     # ============================================================================
     # Всё, что касается векторизации
 
-    def vectorizator(self, docs: list, db_folder: str, **kwargs):
-        """Универсальный метод векторизации с автонастройкой для E5"""
+    # Загрузчик модели эмбеддингов
+    def load_embedding_model(self, model_name: str, model_type: str = "huggingface", **kwargs) -> bool:
+        """Загружает модель эмбеддингов один раз для последующего использования"""
         try:
-            model_type = kwargs.get("model_type", "huggingface").lower()
-            model_name = kwargs.get("model_name", "")
-            is_e5_model = "e5" in model_name.lower()
-
-            # Валидация параметров
-            if not model_name: return False, "Не указано название модели"
+            self.is_e5_model = "e5" in model_name.lower()
 
             # Автоматические настройки для E5
             encode_kwargs = kwargs.get("encode_kwargs", {})
             model_kwargs = kwargs.get("model_kwargs", {})
 
-            if is_e5_model:
-                # Принудительная нормализация и префиксы
+            if self.is_e5_model:
                 encode_kwargs.update({
                     'normalize_embeddings': True,
                     'batch_size': 64,
                     'convert_to_numpy': True
                 })
-                # Добавляем префиксы к текстам
-                docs = self._add_e5_prefixes(docs)
 
-            # Создаем эмбеддинги
             if model_type == "openai":
-                embeddings = OpenAIEmbeddings(
+                self.embeddings = OpenAIEmbeddings(
                     model=model_name,
                     api_key=self.api_key,
                     base_url=self.api_url
                 )
-                distance_strategy = "COSINE"
+                self.distance_strategy = "COSINE"
 
             elif model_type == "huggingface":
-                embeddings = HuggingFaceEmbeddings(
+                self.embeddings = HuggingFaceEmbeddings(
                     model_name=model_name,
                     model_kwargs=model_kwargs,
                     encode_kwargs=encode_kwargs
                 )
+                self.distance_strategy = "COSINE" if encode_kwargs.get('normalize_embeddings', False) else "L2"
 
-                distance_strategy = "COSINE" if encode_kwargs.get('normalize_embeddings', False) else "L2"
+            self.embedding_model_name = model_name
+            self.embedding_model_type = model_type
+            return True
+
+        except Exception as e:
+            print(f"Ошибка загрузки модели: {str(e)}")
+            return False
+
+    def vectorizator(self, docs: list, db_folder: str, **kwargs):
+        """Универсальный метод векторизации с автонастройкой для E5 и поддержкой предзагруженной модели"""
+        try:
+            # Всегда инициализируем encode_kwargs по умолчанию
+            encode_kwargs = kwargs.get("encode_kwargs", {})
+            model_kwargs = kwargs.get("model_kwargs", {})
+
+            # Если модель уже загружена (через load_embedding_model), используем её
+            if hasattr(self, 'embeddings') and self.embeddings is not None:
+                embeddings = self.embeddings
+                distance_strategy = self.distance_strategy
+                is_e5_model = self.is_e5_model
+                model_name = self.embedding_model_name
+                model_type = self.embedding_model_type
             else:
-                return False, f"Неподдерживаемый тип модели: {model_type}"
+                # Иначе загружаем модель из параметров (старый способ)
+                model_type = kwargs.get("model_type", "huggingface").lower()
+                model_name = kwargs.get("model_name", "")
+                is_e5_model = "e5" in model_name.lower()
+
+                # Валидация параметров
+                if not model_name:
+                    return False, "Не указано название модели"
+
+                # Автоматические настройки для E5
+                if is_e5_model:
+                    encode_kwargs.update({
+                        'normalize_embeddings': True,
+                        'batch_size': 64,
+                        'convert_to_numpy': True
+                    })
+
+                if model_type == "openai":
+                    embeddings = OpenAIEmbeddings(
+                        model=model_name,
+                        api_key=self.api_key,
+                        base_url=self.api_url
+                    )
+                    distance_strategy = "COSINE"
+
+                elif model_type == "huggingface":
+                    embeddings = HuggingFaceEmbeddings(
+                        model_name=model_name,
+                        model_kwargs=model_kwargs,
+                        encode_kwargs=encode_kwargs
+                    )
+                    distance_strategy = "COSINE" if encode_kwargs.get('normalize_embeddings', False) else "L2"
+                else:
+                    return False, f"Неподдерживаемый тип модели: {model_type}"
+
+            # Для E5 моделей добавляем префиксы
+            if is_e5_model:
+                docs = self._add_e5_prefixes(docs)
 
             # Проверка на пустые документы
-            if not docs: return False, "Нет данных для векторизации"
+            if not docs:
+                return False, "Нет данных для векторизации"
 
             # Создаем и сохраняем индекс
             self.db = FAISS.from_documents(
@@ -776,7 +832,8 @@ class DBConstructor(RAGProcessor):
                 "embedding_model": model_name,
                 "model_type": model_type,
                 "dimension": self._get_embedding_dimension(embeddings),
-                "normalized": encode_kwargs.get('normalize_embeddings', False),
+                "normalized": encode_kwargs.get('normalize_embeddings', False) if not hasattr(self, 'embeddings') else (
+                            self.distance_strategy == "COSINE"),
                 "distance_strategy": distance_strategy,
                 "is_e5_model": is_e5_model
             }
